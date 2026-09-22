@@ -81,7 +81,7 @@ function waitFor(l: Lane, now: number): number {
 let cursor = 0;
 
 /** Parks every queued request after Agnes/Cloudflare reports 429 or 1015. */
-export function reportImageRateLimit(retryAfterMs = WINDOW_MS): void {
+export function reportImageRateLimit(retryAfterMs = 15_000): void {
   cooldownUntil = Math.max(cooldownUntil, Date.now() + Math.max(SPACING_MS, retryAfterMs));
 }
 
