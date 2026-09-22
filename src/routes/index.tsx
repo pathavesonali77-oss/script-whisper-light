@@ -876,7 +876,7 @@ function Index() {
            * after MAX_IMAGE_ATTEMPTS tries is the panel marked failed.
            */
           const requeue = (g: Job, msg: string) => {
-            if (/429|1015|rate|quota/i.test(msg)) cooldownUntil = Date.now() + 15_000;
+            if (/429|1015|rate|quota/i.test(msg)) cooldownUntil = Date.now() + 2_000;
             if (g.attempts + 1 < MAX_IMAGE_ATTEMPTS && !cancelRef.current) {
               queue.push({ ...g, attempts: g.attempts + 1 });
               record(g.seg.index, { status: "waiting", error: undefined });
