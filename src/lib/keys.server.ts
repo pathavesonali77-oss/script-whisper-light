@@ -6,25 +6,21 @@
  * with AGNES_API_KEY accepted as a first key too). Keys are read only here, on
  * the server, and are never sent to the browser or written into the codebase.
  *
- * The free tier allows 20 requests per minute PER KEY, so each key owns its own
- * hard 20 RPM sliding-window gate plus a small concurrency cap. Every image
- * request in the process passes through `withImageKey`, which picks the first
- * key with room, so no key can ever exceed its limit no matter how many lanes
- * the page runs.
+ * Agnes' Cloudflare edge applies the 20 RPM limit to the shared caller, not
+ * independently to each credential. Every image request therefore passes
+ * through one process-wide, sequential 20 RPM gate. Keys still rotate so an
+ * exhausted or invalid credential does not pin every later panel to one key.
  */
 
-/** Requests allowed per rolling minute, per key (provider limit). */
+/** Requests allowed per rolling minute across the Agnes image service. */
 export const IMAGE_RPM = 20;
 /** Rolling window length. */
 const WINDOW_MS = 60_000;
 /** Safety margin so clock drift never pushes a request over the edge. */
 const SPACING_MS = Math.ceil(WINDOW_MS / IMAGE_RPM) + 100; // ~3.1s between starts per key
 
-/**
- * How many renders may be in flight at once per key. A render can take tens of
- * seconds; more than this in parallel buys nothing once 20 RPM is the ceiling.
- */
-export const PER_KEY_CONCURRENCY = 4;
+/** Agnes starts rejecting the shared connection when requests overlap. */
+export const IMAGE_CONCURRENCY = 1;
 
 /** All configured Agnes keys, in order. */
 export function agnesKeys(): string[] {
@@ -57,23 +53,17 @@ export function agnesKey(): string {
 
 type Lane = { starts: number[]; inFlight: number; lastStart: number };
 
-const lanes = new Map<string, Lane>();
-
-function lane(key: string): Lane {
-  let l = lanes.get(key);
-  if (!l) {
-    l = { starts: [], inFlight: 0, lastStart: 0 };
-    lanes.set(key, l);
-  }
-  return l;
-}
+/** Shared by every key because error 1015 is imposed before authentication. */
+const providerLane: Lane = { starts: [], inFlight: 0, lastStart: 0 };
+let cooldownUntil = 0;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** Milliseconds to wait before this key may start another request. 0 = go now. */
 function waitFor(l: Lane, now: number): number {
   l.starts = l.starts.filter((t) => now - t < WINDOW_MS);
-  if (l.inFlight >= PER_KEY_CONCURRENCY) return 200;
+  if (now < cooldownUntil) return cooldownUntil - now;
+  if (l.inFlight >= IMAGE_CONCURRENCY) return 200;
   const sinceLast = now - l.lastStart;
   if (sinceLast < SPACING_MS) return SPACING_MS - sinceLast;
   if (l.starts.length >= IMAGE_RPM) {
@@ -86,10 +76,14 @@ function waitFor(l: Lane, now: number): number {
 /** Round-robin cursor so load spreads evenly across the keys. */
 let cursor = 0;
 
+/** Parks every queued request after Agnes/Cloudflare reports 429 or 1015. */
+export function reportImageRateLimit(retryAfterMs = WINDOW_MS): void {
+  cooldownUntil = Math.max(cooldownUntil, Date.now() + Math.max(SPACING_MS, retryAfterMs));
+}
+
 /**
- * Leases a rate-limit slot on the least busy key for the duration of `fn` and
- * hands it that key. Keeps the historical signature (`slot`, `attempt`) so
- * callers are unchanged.
+ * Leases the service-wide image slot and hands the request the next key.
+ * Keeps the historical signature (`slot`, `attempt`) so callers are unchanged.
  */
 export async function withImageKey<T>(
   _slot: number,
@@ -97,32 +91,22 @@ export async function withImageKey<T>(
   fn: (key: string, keyIndex: number) => Promise<T>,
 ): Promise<T> {
   const keys = agnesKeys();
-  let chosen = -1;
   for (;;) {
     const now = Date.now();
-    let best = Number.POSITIVE_INFINITY;
-    for (let i = 0; i < keys.length; i++) {
-      const idx = (cursor + i) % keys.length;
-      const wait = waitFor(lane(keys[idx] as string), now);
-      if (wait <= 0) {
-        chosen = idx;
-        break;
-      }
-      if (wait < best) best = wait;
-    }
-    if (chosen >= 0) break;
-    await sleep(Math.min(best, 1_000));
+    const wait = waitFor(providerLane, now);
+    if (wait <= 0) break;
+    await sleep(Math.min(wait, 1_000));
   }
+  const chosen = cursor;
   cursor = (chosen + 1) % keys.length;
   const key = keys[chosen] as string;
-  const l = lane(key);
   const now = Date.now();
-  l.lastStart = now;
-  l.starts.push(now);
-  l.inFlight++;
+  providerLane.lastStart = now;
+  providerLane.starts.push(now);
+  providerLane.inFlight++;
   try {
     return await fn(key, chosen);
   } finally {
-    l.inFlight--;
+    providerLane.inFlight--;
   }
 }

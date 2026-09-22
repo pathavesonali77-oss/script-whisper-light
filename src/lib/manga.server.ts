@@ -1,5 +1,5 @@
 import type { Segment } from "./script";
-import { withImageKey } from "./keys.server";
+import { reportImageRateLimit, withImageKey } from "./keys.server";
 import {
   parsePanelPlan,
   panelDirective,
@@ -2265,7 +2265,12 @@ export async function generateImage(
             lastErr = "no output url";
           }
         } else {
-          lastErr = `${res.status} ${await res.text().catch(() => "")}`.slice(0, 300);
+          const responseText = await res.text().catch(() => "");
+          lastErr = `${res.status} ${responseText}`.slice(0, 300);
+          if (res.status === 429 || /error code:?\s*1015|rate limit|too many requests/i.test(responseText)) {
+            const retryAfter = Number(res.headers.get("retry-after"));
+            reportImageRateLimit(Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1_000 : undefined);
+          }
         }
         if (lastErr) console.warn(`[agnes] seed=${seed} attempt ${attempt + 1}: ${lastErr}`);
       } catch (e) {
@@ -2279,7 +2284,8 @@ export async function generateImage(
       return null;
     });
     if (url) return url;
-    // Short breather only: long back-offs made panels look stuck.
+    // The shared gate supplies any long provider cooldown; this only yields
+    // between ordinary retries.
     await pause(100);
   }
   throw new Error(`Image generation failed: ${lastErr}`);
