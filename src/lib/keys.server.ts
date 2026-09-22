@@ -19,12 +19,8 @@ const WINDOW_MS = 60_000;
 /** Safety margin so clock drift never pushes a request over the edge. */
 const SPACING_MS = Math.ceil(WINDOW_MS / IMAGE_RPM) + 100; // ~3.1s between starts per key
 
-/**
- * Requests may overlap, but only because every start is still spaced ~3.1s
- * apart by the gate below, so the service never sees a burst. Overlapping a
- * few slow renders is what keeps total wall time low.
- */
-export const IMAGE_CONCURRENCY = 3;
+/** One image in flight per key: all nine keys draw at the same time. */
+export const IMAGE_CONCURRENCY = 9;
 
 /** All configured Agnes keys, in order. */
 export function agnesKeys(): string[] {
