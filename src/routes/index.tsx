@@ -117,7 +117,7 @@ const PROMPT_RANGE = 15;
  * connection, so overlapping browser lanes trigger error 1015 after four
  * panels even when they use different keys.
  */
-const IMAGE_CONCURRENCY = 3;
+const IMAGE_CONCURRENCY = 9;
 const IMAGE_BATCH = 1;
 /**
  * The server already downloads and validates every finished image (complete

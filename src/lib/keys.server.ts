@@ -121,6 +121,6 @@ export async function withImageKey<T>(
   try {
     return await fn(key, chosen);
   } finally {
-    providerLane.inFlight--;
+    lane.busy = false;
   }
 }
