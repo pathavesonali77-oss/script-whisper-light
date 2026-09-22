@@ -117,7 +117,7 @@ const PROMPT_RANGE = 15;
  * connection, so overlapping browser lanes trigger error 1015 after four
  * panels even when they use different keys.
  */
-const IMAGE_CONCURRENCY = 3;
+const IMAGE_CONCURRENCY = 9;
 const IMAGE_BATCH = 1;
 /**
  * The server already downloads and validates every finished image (complete
@@ -876,7 +876,7 @@ function Index() {
            * after MAX_IMAGE_ATTEMPTS tries is the panel marked failed.
            */
           const requeue = (g: Job, msg: string) => {
-            if (/429|1015|rate|quota/i.test(msg)) cooldownUntil = Date.now() + 15_000;
+            if (/429|1015|rate|quota/i.test(msg)) cooldownUntil = Date.now() + 2_000;
             if (g.attempts + 1 < MAX_IMAGE_ATTEMPTS && !cancelRef.current) {
               queue.push({ ...g, attempts: g.attempts + 1 });
               record(g.seg.index, { status: "waiting", error: undefined });
