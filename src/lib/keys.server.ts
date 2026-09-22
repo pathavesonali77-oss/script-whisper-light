@@ -79,8 +79,11 @@ function laneReady(l: Lane, now: number): boolean {
   l.starts = l.starts.filter((t) => now - t < WINDOW_MS);
   if (l.busy) return false;
   if (now < l.cooldownUntil) return false;
-  return l.starts.length < IMAGE_RPM;
+  const last = l.starts.length ? (l.starts[l.starts.length - 1] as number) : 0;
+  if (now - last < SPACING_MS) return false;
+  return l.starts.length < SAFE_RPM;
 }
+
 
 /** Round-robin cursor so load spreads evenly across the keys. */
 let cursor = 0;
