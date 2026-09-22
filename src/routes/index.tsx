@@ -112,12 +112,12 @@ const PROMPT_RANGE = 15;
 
 
 /**
- * Image pipeline shape: ONE Agnes AI key, one model (agnes-image-2.5-flash).
- * The free tier allows 20 requests per minute, and the server owns that budget
- * (src/lib/keys.server.ts), so a few client lanes simply keep the queue fed
- * without ever racing past the limit.
+ * Image pipeline shape: one paced queue, rotating Agnes keys, and one model
+ * (agnes-image-2.5-flash). Agnes applies its 20 RPM edge limit to the shared
+ * connection, so overlapping browser lanes trigger error 1015 after four
+ * panels even when they use different keys.
  */
-const IMAGE_CONCURRENCY = 4;
+const IMAGE_CONCURRENCY = 1;
 const IMAGE_BATCH = 1;
 /**
  * The server already downloads and validates every finished image (complete
@@ -876,7 +876,7 @@ function Index() {
            * after MAX_IMAGE_ATTEMPTS tries is the panel marked failed.
            */
           const requeue = (g: Job, msg: string) => {
-            if (/429|rate|quota/i.test(msg)) cooldownUntil = Date.now() + 5000;
+            if (/429|1015|rate|quota/i.test(msg)) cooldownUntil = Date.now() + 60_000;
             if (g.attempts + 1 < MAX_IMAGE_ATTEMPTS && !cancelRef.current) {
               queue.push({ ...g, attempts: g.attempts + 1 });
               record(g.seg.index, { status: "waiting", error: undefined });
