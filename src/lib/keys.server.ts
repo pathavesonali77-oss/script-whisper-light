@@ -12,15 +12,22 @@
  * exhausted or invalid credential does not pin every later panel to one key.
  */
 
-/** Requests allowed per rolling minute across the Agnes image service. */
+/** Hard provider ceiling per key, per rolling minute. */
 export const IMAGE_RPM = 20;
 /** Rolling window length. */
 const WINDOW_MS = 60_000;
-/** Safety margin so clock drift never pushes a request over the edge. */
-const SPACING_MS = Math.ceil(WINDOW_MS / IMAGE_RPM) + 100; // ~3.1s between starts per key
+/**
+ * Self-imposed ceiling per key: we deliberately stay well under the provider's
+ * 20 per minute so a key can never reach its limit, even with clock drift or
+ * retries.
+ */
+const SAFE_RPM = 12;
+/** Minimum gap between two starts on the SAME key (~5s at 12 rpm). */
+const SPACING_MS = Math.ceil(WINDOW_MS / SAFE_RPM);
 
 /** One image in flight per key: all nine keys draw at the same time. */
 export const IMAGE_CONCURRENCY = 9;
+
 
 /** All configured Agnes keys, in order. */
 export function agnesKeys(): string[] {
