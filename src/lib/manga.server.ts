@@ -15,10 +15,7 @@ const AGNES_IMAGE_MODEL = "agnes-image-2.5-flash";
 // Generation can legitimately take minutes when the renderer is busy. A short
 // deadline used to kill healthy renders at 60s and made long runs look stuck,
 // so this is only a very generous safety net, never a fast-fail.
-// A slow provider call must return control to the visible browser queue. The
-// queue can then retry it on a fresh slot/key instead of displaying "drawing"
-// for many minutes inside one opaque server request.
-const IMAGE_REQUEST_TIMEOUT_MS = 120_000;
+const IMAGE_REQUEST_TIMEOUT_MS = 180_000;
 
 /**
  * Renderer-only art direction. The writing model describes only scene content;
@@ -2416,21 +2413,81 @@ export async function renderPanel(
     );
 
 
-  // Exactly one provider request belongs to one browser job. If it fails or
-  // reaches the two-minute deadline, the browser immediately re-queues that
-  // panel with a fresh seed/key. This prevents hidden retry ladders from
-  // leaving all nine panels visibly stuck for ten minutes or longer.
-  tries++;
-  try {
-    const url = await generateImage(prompt, seed, slot, bible, 1, line, continuity, plan);
-    return { url, prompt, level: 0, tries, rewritten };
-  } catch (e) {
-    if (e instanceof KilledError) throw e;
-    const msg = e instanceof Error ? e.message : String(e);
-    errors.push(msg);
+  // Stage 1 — the prompt exactly as written, retried in full on fresh seeds and
+  // fresh keys. Each round itself retries inside generateImage, so a busy or
+  // flaky renderer is worked through instead of failing the panel.
+  let refused = false;
+  for (let round = 0; round < 3; round++) {
+    tries++;
+    try {
+      const url = await generateImage(
+        prompt,
+        seed + round * 1861,
+        slot + round,
+        bible,
+        3,
+        line,
+        continuity,
+        plan,
+      );
+      return { url, prompt, level: 0, tries, rewritten };
+    } catch (e) {
+      if (e instanceof KilledError) throw e;
+      const msg = e instanceof Error ? e.message : String(e);
+      errors.push(`round ${round + 1}: ${msg}`);
+      if (contentRefusal(msg)) refused = true;
+    }
+    await pause(400 * (round + 1));
+  }
+  // Stage 2 — softened wording (same scene, same length). Tried whenever the
+  // full prompt could not be rendered, not only on an explicit refusal: a free
+  // renderer often reports a content block as a plain failure.
+  const softened = promptVariant(prompt, 1, line);
+  if (softened && softened !== prompt) {
+    for (let round = 0; round < (refused ? 3 : 2); round++) {
+      tries++;
+      try {
+        const url = await generateImage(
+          softened,
+          seed + 5471 + round * 977,
+          slot + round,
+          bible,
+          3,
+          line,
+          continuity,
+          plan,
+        );
+        return { url, prompt: softened, level: 1, tries, rewritten };
+      } catch (e) {
+        if (e instanceof KilledError) throw e;
+        errors.push(`softened ${round + 1}: ${e instanceof Error ? e.message : String(e)}`);
+      }
+      await pause(500 * (round + 1));
+    }
   }
 
-  throw new Error(`Image generation failed after ${tries} try — ${errors[0] ?? "provider did not respond"}`);
+  // Stage 3 — last resort: the same scene rendered in the plainest possible
+  // wording, so a panel is produced rather than a hole in the story.
+  const plain = sanitizePrompt(softened || prompt)
+    .replace(/["'“”‘’]/g, "")
+    .replace(/\s{2,}/g, " ")
+    .trim()
+    .slice(0, 900);
+  if (plain.length >= 20) {
+    for (let round = 0; round < 3; round++) {
+      tries++;
+      try {
+        const url = await generateImage(plain, seed + 9109 + round * 613, slot + round, bible, 3, line, continuity, plan);
+        return { url, prompt: plain, level: 2, tries, rewritten };
+      } catch (e) {
+        if (e instanceof KilledError) throw e;
+        errors.push(`plain ${round + 1}: ${e instanceof Error ? e.message : String(e)}`);
+      }
+      await pause(600 * (round + 1));
+    }
+  }
+
+  throw new Error(`Image generation failed after ${tries} tries — ${errors.slice(-2).join(" | ")}`);
 
 }
 

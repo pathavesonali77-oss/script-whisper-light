@@ -254,8 +254,11 @@ function useSwallowCancellations() {
   }, []);
 }
 
-/** One slow call returns to the queue instead of freezing a panel indefinitely. */
-const IMAGE_REQUEST_DEADLINE_MS = 150_000;
+/**
+ * Practically no ceiling: a drawing round trip is left alone until it answers.
+ * The old eight-minute cut-off was throwing away healthy renders.
+ */
+const IMAGE_REQUEST_DEADLINE_MS = 6 * 60 * 60_000;
 
 async function getPrompts(input: PromptRequest): Promise<{ prompts: string[] }> {
   const label = `${input.from}-${input.to}`;

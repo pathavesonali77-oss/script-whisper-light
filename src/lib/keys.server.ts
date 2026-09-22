@@ -6,9 +6,10 @@
  * with AGNES_API_KEY accepted as a first key too). Keys are read only here, on
  * the server, and are never sent to the browser or written into the codebase.
  *
- * Each panel slot is pinned deterministically to its own key. This matters in
- * serverless deployments where simultaneous calls may run in separate
- * instances and would otherwise all begin with the first key.
+ * Agnes' Cloudflare edge applies the 20 RPM limit to the shared caller, not
+ * independently to each credential. Every image request therefore passes
+ * through one process-wide, sequential 20 RPM gate. Keys still rotate so an
+ * exhausted or invalid credential does not pin every later panel to one key.
  */
 
 /** Hard provider ceiling per key, per rolling minute. */
@@ -85,6 +86,8 @@ function laneReady(l: Lane, now: number): boolean {
 }
 
 
+/** Round-robin cursor so load spreads evenly across the keys. */
+let cursor = 0;
 /** The key most recently handed out, so a rate-limit report can park it. */
 let lastLeased = "";
 
@@ -101,22 +104,20 @@ export function reportImageRateLimit(retryAfterMs = 15_000): void {
  * Keeps the historical signature (`slot`, `attempt`) so callers are unchanged.
  */
 export async function withImageKey<T>(
-  slot: number,
+  _slot: number,
   _attempt: number,
   fn: (key: string, keyIndex: number) => Promise<T>,
 ): Promise<T> {
   const keys = agnesKeys();
   let chosen = -1;
-  const preferred = Math.abs(slot) % keys.length;
   for (;;) {
     const now = Date.now();
     for (let i = 0; i < keys.length; i++) {
-      // Start with this panel's assigned key. Fall back only when that key is
-      // already occupied in the same instance, keeping all nine keys active.
-      const idx = (preferred + i) % keys.length;
+      const idx = (cursor + i) % keys.length;
       const candidate = keys[idx] as string;
       if (laneReady(laneFor(candidate), now)) {
         chosen = idx;
+        cursor = (idx + 1) % keys.length;
         break;
       }
     }
