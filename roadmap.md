@@ -12,3 +12,4 @@
 - [x] Remove forced age, gender, relationship-status, and other lead-character restrictions
 - [x] Run one small script test and show the output image
 - [x] Fix the repeatable four-panel cutoff caused by Agnes error 1015 burst limiting
+- [x] Prevent hidden retries from leaving all nine panels stuck on drawing
