@@ -17,13 +17,14 @@ export const IMAGE_RPM = 20;
 /** Rolling window length. */
 const WINDOW_MS = 60_000;
 /**
- * Self-imposed ceiling per key: we deliberately stay well under the provider's
- * 20 per minute so a key can never reach its limit, even with clock drift or
- * retries.
+ * Self-imposed ceiling per key: after every generation a key rests
+ * COOLDOWN_PER_KEY_MS (20s) before its next request, capping each key at
+ * 3 per minute — far under the provider's 20 per minute, so it never trips.
  */
-const SAFE_RPM = 12;
-/** Minimum gap between two starts on the SAME key (~5s at 12 rpm). */
-const SPACING_MS = Math.ceil(WINDOW_MS / SAFE_RPM);
+const COOLDOWN_PER_KEY_MS = 20_000;
+const SAFE_RPM = 3;
+/** Minimum gap between two starts on the SAME key: a flat 20 seconds. */
+const SPACING_MS = COOLDOWN_PER_KEY_MS;
 
 /** One image in flight per key: all nine keys draw at the same time. */
 export const IMAGE_CONCURRENCY = 9;
