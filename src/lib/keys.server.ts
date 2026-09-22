@@ -51,38 +51,45 @@ export function agnesKey(): string {
   return agnesKeys()[0] as string;
 }
 
-type Lane = { starts: number[]; inFlight: number; lastStart: number };
+type Lane = { starts: number[]; busy: boolean; cooldownUntil: number };
 
-/** Shared by every key because error 1015 is imposed before authentication. */
-const providerLane: Lane = { starts: [], inFlight: 0, lastStart: 0 };
-let cooldownUntil = 0;
+/** One independent lane per key: each key draws its own image in parallel. */
+const lanes = new Map<string, Lane>();
+
+function laneFor(key: string): Lane {
+  let l = lanes.get(key);
+  if (!l) {
+    l = { starts: [], busy: false, cooldownUntil: 0 };
+    lanes.set(key, l);
+  }
+  return l;
+}
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** Milliseconds to wait before this key may start another request. 0 = go now. */
-function waitFor(l: Lane, now: number): number {
+/** True when this key may start a request right now. */
+function laneReady(l: Lane, now: number): boolean {
   l.starts = l.starts.filter((t) => now - t < WINDOW_MS);
-  if (now < cooldownUntil) return cooldownUntil - now;
-  if (l.inFlight >= IMAGE_CONCURRENCY) return 200;
-  const sinceLast = now - l.lastStart;
-  if (sinceLast < SPACING_MS) return SPACING_MS - sinceLast;
-  if (l.starts.length >= IMAGE_RPM) {
-    const oldest = l.starts[0] as number;
-    return Math.max(50, WINDOW_MS - (now - oldest));
-  }
-  return 0;
+  if (l.busy) return false;
+  if (now < l.cooldownUntil) return false;
+  return l.starts.length < IMAGE_RPM;
 }
 
 /** Round-robin cursor so load spreads evenly across the keys. */
 let cursor = 0;
+/** The key most recently handed out, so a rate-limit report can park it. */
+let lastLeased = "";
 
-/** Parks every queued request after Agnes/Cloudflare reports 429 or 1015. */
+/** Parks only the key that hit 429/1015; the other keys keep drawing. */
 export function reportImageRateLimit(retryAfterMs = 15_000): void {
-  cooldownUntil = Math.max(cooldownUntil, Date.now() + Math.max(SPACING_MS, retryAfterMs));
+  if (!lastLeased) return;
+  const l = laneFor(lastLeased);
+  l.cooldownUntil = Math.max(l.cooldownUntil, Date.now() + Math.max(1_000, retryAfterMs));
 }
 
 /**
- * Leases the service-wide image slot and hands the request the next key.
+ * Leases a free key and runs the request on it. Every key works in parallel,
+ * each held to its own 20 requests per minute, so nine images draw at once.
  * Keeps the historical signature (`slot`, `attempt`) so callers are unchanged.
  */
 export async function withImageKey<T>(
@@ -91,19 +98,26 @@ export async function withImageKey<T>(
   fn: (key: string, keyIndex: number) => Promise<T>,
 ): Promise<T> {
   const keys = agnesKeys();
+  let chosen = -1;
   for (;;) {
     const now = Date.now();
-    const wait = waitFor(providerLane, now);
-    if (wait <= 0) break;
-    await sleep(Math.min(wait, 1_000));
+    for (let i = 0; i < keys.length; i++) {
+      const idx = (cursor + i) % keys.length;
+      const candidate = keys[idx] as string;
+      if (laneReady(laneFor(candidate), now)) {
+        chosen = idx;
+        cursor = (idx + 1) % keys.length;
+        break;
+      }
+    }
+    if (chosen >= 0) break;
+    await sleep(250);
   }
-  const chosen = cursor;
-  cursor = (chosen + 1) % keys.length;
   const key = keys[chosen] as string;
-  const now = Date.now();
-  providerLane.lastStart = now;
-  providerLane.starts.push(now);
-  providerLane.inFlight++;
+  const lane = laneFor(key);
+  lane.busy = true;
+  lane.starts.push(Date.now());
+  lastLeased = key;
   try {
     return await fn(key, chosen);
   } finally {
