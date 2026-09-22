@@ -15,7 +15,7 @@ const AGNES_IMAGE_MODEL = "agnes-image-2.5-flash";
 // Generation can legitimately take minutes when the renderer is busy. A short
 // deadline used to kill healthy renders at 60s and made long runs look stuck,
 // so this is only a very generous safety net, never a fast-fail.
-const IMAGE_REQUEST_TIMEOUT_MS = 1_800_000;
+const IMAGE_REQUEST_TIMEOUT_MS = 180_000;
 
 /**
  * Renderer-only art direction. The writing model describes only scene content;
